@@ -1,24 +1,24 @@
-#include "widget.h"
+#include "httpposter.h"
 
 #include <QUrl>
 #include <QGuiApplication>
 #include <QSharedMemory>
-#include <QBuffer>
-#include <QNetworkAccessManager>
-#include <QHttpMultiPart>
-#include <QNetworkReply>
+#include <QDateTime>
 #include <QSize>
 #include <QDir>
 #include <QThread>
+#include <QPixmap>
+#include <QDebug>
 
 intptr_t findWindow(int pid, char const * titleParts[]);
 int captureImage(intptr_t hwnd, char ** out, int * nout, bool all);
 int findProcessId(char const * name, bool latest);
 int getProcessId();
 int getParentProcessId(int pid);
+intptr_t getProcessHandle(int pid);
+bool waitForHandle(intptr_t handle, unsigned int msec);
 
 QPixmap captureImage(intptr_t hwnd, bool separated);
-void postImage(QUrl url, QString name, QIODevice * data);
 
 int main(int argc, char *argv[])
 {
@@ -32,6 +32,8 @@ int main(int argc, char *argv[])
     QSize maxsize(0, 0);
     QUrl postUrl;
     QString session;
+    QString httpProxy;
+    bool waitParent = false;
 
     // Parse arguments
     for (int i = 1; i < argc; ++i) {
@@ -66,6 +68,10 @@ int main(int argc, char *argv[])
             postUrl = QUrl(value);
         } else if (arg == "captureSession" || arg == "session") {
             session = value;
+        } else if (arg == "httpProxy") {
+            httpProxy = value;
+        } else if (arg == "waitParent") {
+            waitParent = QByteArray(value) == "true";
         } else {
             qWarning() << "ScreenCaptureTool: unknown argument" << arg;
         }
@@ -83,15 +89,16 @@ int main(int argc, char *argv[])
     volatile int & sharedPid = *reinterpret_cast<int*>(shared.data());
     sharedPid = 0;
 
+    QGuiApplication app(argc, argv);
+
     // Check arguments
     if (!postUrl.isValid()) {
         qWarning() << "ScreenCaptureTool: invalid command line argument: postUrl not valid";
         return 2;
-    } else if (postUrl.isLocalFile()) {
-        if (!QDir::current().mkpath(postUrl.toLocalFile())) {
-            qWarning() << "ScreenCaptureTool: can't write to directory:" << postUrl.toLocalFile();
-            return 3;
-        }
+    }
+    UrlPoster * poster = UrlPoster::create(postUrl);
+    if (poster == nullptr) {
+        return 3;
     }
     if (interval == 0) {
         qWarning() << "ScreenCaptureTool: invalid command line argument: interval not valid";
@@ -128,17 +135,31 @@ int main(int argc, char *argv[])
         }
         qDebug() << "ScreenCaptureTool: found capture window:" << captureHwnd;
     }
+    intptr_t hparent = 0;
+    if (waitParent) {
+        hparent = getProcessHandle(getParentProcessId(pid));
+        if (hparent == 0) {
+            qWarning() << "ScreenCaptureTool: can't not wait for parent";
+            return 3;
+        }
+        qDebug() << "ScreenCaptureTool: wait for parent:" << hparent;
+    }
     qDebug() << "ScreenCaptureTool: interval:" << interval;
     qDebug() << "ScreenCaptureTool: maxsize:" << maxsize;
     qDebug() << "ScreenCaptureTool: maxcount:" << maxcount;
     qDebug() << "ScreenCaptureTool: captureSeparated:" << captureSeparated;
     qDebug() << "ScreenCaptureTool: postUrl:" << postUrl.toEncoded();
     qDebug() << "ScreenCaptureTool: session:" << session;
+    qDebug() << "ScreenCaptureTool: httpProxy:" << httpProxy;
+    qDebug() << "ScreenCaptureTool: waitParent:" << waitParent;
 
     // Start capture loop
     sharedPid = pid;
     qDebug() << "ScreenCaptureTool: start";
-    QGuiApplication app(argc, argv);
+    if (!poster->config(postUrl, httpProxy)) {
+        return 3;
+    }
+
     quint32 count = 0;
     while (sharedPid == pid) {
         QString name;
@@ -153,26 +174,21 @@ int main(int argc, char *argv[])
             QDateTime time = QDateTime::currentDateTime();
             QString name = time.toString(Qt::DateFormat::ISODate).replace(":", "_") + ".jpg";
             qDebug() << "ScreenCaptureTool: capture a image:" << name;
-            if (postUrl.isLocalFile()) {
-                name = postUrl.toLocalFile()
-                        + QDir::separator() + name;
-                if (!pixmap.save(name, "jpg")) {
-                    qWarning() << "ScreenCaptureTool: save image failed";
-                }
-            } else {
-                QBuffer * buffer = new QBuffer;
-                buffer->open(QBuffer::ReadWrite);
-                pixmap.save(buffer, "jpg");
-                postImage(postUrl, name, buffer);
-            }
+            poster->postImage(pixmap, name, "jpg");
             ++count;
             if (maxcount && count >= maxcount)
                 break;
         }
-        QThread::sleep(interval);
+        if (hparent) {
+            if (waitForHandle(hparent, interval * 1000))
+                break;
+        } else {
+            QThread::sleep(interval);
+        }
     }
 
     // Exit capture loop
+    delete poster;
     sharedPid = 0;
     qDebug() << "ScreenCaptureTool: exit, capture count:" << count;
 
@@ -192,23 +208,3 @@ QPixmap captureImage(intptr_t hwnd, bool separated)
     return pixmap;
 }
 
-void postImage(QUrl url, QString name, QIODevice * data)
-{
-    static QNetworkAccessManager manager;
-    QNetworkRequest request(url);
-    QHttpMultiPart * multiPart = new QHttpMultiPart();
-    QHttpPart part;
-    part.setRawHeader("Content-Type", "image/");
-    part.setRawHeader("Content-Disposition", name.toUtf8());
-    multiPart->append(part);
-    data->setParent(multiPart);
-    QNetworkReply * reply = manager.post(request, multiPart);
-    void (QNetworkReply::* error)(QNetworkReply::NetworkError) = &QNetworkReply::error;
-    QObject::connect(reply, error, [reply] (QNetworkReply::NetworkError e) {
-        qWarning() << "ScreenCaptureTool: post image failed" << e << reply->errorString();
-    });
-    QObject::connect(reply, &QNetworkReply::finished, [reply, multiPart] {
-        reply->deleteLater();
-        multiPart->deleteLater();
-    });
-}

@@ -79,7 +79,7 @@ int findProcessId(char const * name, bool latest)
                             ::CloseHandle(hProc);
                             if ((CompareFileTime(&lpCreationTime, &lpCreationTime2) > 0) == latest)
                             {
-                                pid = procEntry.th32ProcessID;
+                                pid = static_cast<int>(procEntry.th32ProcessID);
                                 lpCreationTime2 = lpCreationTime;
                             }
                         }
@@ -97,6 +97,19 @@ int findProcessId(char const * name, bool latest)
         ::CloseHandle( hProcSnapshot );
     }
     return pid;
+}
+
+intptr_t getProcessHandle(int pid)
+{
+    DWORD dwPid = static_cast<DWORD>(pid);
+    return reinterpret_cast<intptr_t>(::OpenProcess(SYNCHRONIZE, false, dwPid));
+}
+
+bool waitForHandle(intptr_t handle, unsigned int msec)
+{
+    HANDLE hnd = reinterpret_cast<HANDLE>(handle);
+    DWORD dwMSec = static_cast<DWORD>(msec);
+    return ::WaitForSingleObject(hnd, dwMSec) == WAIT_OBJECT_0;
 }
 
 struct EnumWindowParam
@@ -232,6 +245,12 @@ int captureImage(intptr_t hwnd, char ** out, int * nout, bool desk)
     HDC hdcMemDC = nullptr;
     HBITMAP hbMem = nullptr;
     BITMAP bmpMem;
+    RECT rcClient;
+    POINT ptClient;
+    SIZE szClient;
+    char *lpbitmap = nullptr;
+    UINT dwBmpSize;
+    UINT dwSizeofDIB;
 
     // Retrieve the handle to a display device context for the client
     // area of the window.
@@ -250,10 +269,9 @@ int captureImage(intptr_t hwnd, char ** out, int * nout, bool desk)
     }
 
     // Get the client area for size calculation
-    RECT rcClient;
     ::GetClientRect(hWnd, &rcClient);
-    POINT ptClient = {rcClient.left, rcClient.top};
-    SIZE szClient = {rcClient.right-rcClient.left, rcClient.bottom-rcClient.top};
+    ptClient = {rcClient.left, rcClient.top};
+    szClient = {rcClient.right-rcClient.left, rcClient.bottom-rcClient.top};
     if (desk) {
         ::ClientToScreen(hWnd, &ptClient);
     }
@@ -304,13 +322,13 @@ int captureImage(intptr_t hwnd, char ** out, int * nout, bool desk)
     bi.biClrUsed = 0;
     bi.biClrImportant = 0;
 
-    DWORD dwBmpSize = ((bmpMem.bmWidth * bi.biBitCount + 31) / 32) * 4 * bmpMem.bmHeight;
+    dwBmpSize = static_cast<DWORD>(((bmpMem.bmWidth * bi.biBitCount + 31) / 32) * 4 * bmpMem.bmHeight);
 
     // Add the size of the headers to the size of the bitmap to get the total file size
-    DWORD dwSizeofDIB = dwBmpSize + sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+    dwSizeofDIB = dwBmpSize + sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
 
     //Offset to where the actual bitmap bits start.
-    bmfHeader.bfOffBits = (DWORD)sizeof(BITMAPFILEHEADER) + (DWORD)sizeof(BITMAPINFOHEADER);
+    bmfHeader.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
 
     //Size of the file
     bmfHeader.bfSize = dwSizeofDIB;
@@ -318,7 +336,7 @@ int captureImage(intptr_t hwnd, char ** out, int * nout, bool desk)
     //bfType must always be BM for Bitmaps
     bmfHeader.bfType = 0x4D42; //BM
 
-    char *lpbitmap = new char[dwSizeofDIB];
+    lpbitmap = new char[dwSizeofDIB];
 
     memcpy(lpbitmap, &bmfHeader, sizeof(BITMAPFILEHEADER));
 
@@ -327,12 +345,12 @@ int captureImage(intptr_t hwnd, char ** out, int * nout, bool desk)
     // Gets the "bits" from the bitmap and copies them into a buffer
     // which is pointed to by lpbitmap.
     GetDIBits(hdcWindow, hbMem, 0,
-        (UINT)bmpMem.bmHeight,
-        lpbitmap + bmfHeader.bfOffBits,
-        (BITMAPINFO *)&bi, DIB_RGB_COLORS);
+              static_cast<UINT>(bmpMem.bmHeight),
+            lpbitmap + bmfHeader.bfOffBits,
+              reinterpret_cast<BITMAPINFO *>(&bi), DIB_RGB_COLORS);
 
     *out = lpbitmap;
-    *nout = dwSizeofDIB;
+    *nout = static_cast<int>(dwSizeofDIB);
 
     //Clean up
 done:
