@@ -34,6 +34,7 @@ int main(int argc, char *argv[])
     QString session;
     QString httpProxy;
     bool waitParent = false;
+    bool waitProcess = false;
 
     // Parse arguments
     for (int i = 1; i < argc; ++i) {
@@ -42,6 +43,7 @@ int main(int argc, char *argv[])
             qWarning() << "ScreenCaptureTool: invalid argument" << argv[i];
             continue;
         }
+        qWarning() << "ScreenCaptureTool:" << argv[i];
         QByteArray arg(argv[i], value - argv[i]);
         ++value;
         if (arg == "captureProcess" || arg == "process") {
@@ -72,6 +74,8 @@ int main(int argc, char *argv[])
             httpProxy = value;
         } else if (arg == "waitParent") {
             waitParent = QByteArray(value) == "true";
+        } else if (arg == "waitProcess") {
+            waitProcess = QByteArray(value) == "true";
         } else {
             qWarning() << "ScreenCaptureTool: unknown argument" << arg;
         }
@@ -93,7 +97,7 @@ int main(int argc, char *argv[])
 
     // Check arguments
     if (!postUrl.isValid()) {
-        qWarning() << "ScreenCaptureTool: invalid command line argument: postUrl not valid";
+        qWarning() << "ScreenCaptureTool: postUrl not valid";
         return 2;
     }
     UrlPoster * poster = UrlPoster::create(postUrl);
@@ -101,12 +105,12 @@ int main(int argc, char *argv[])
         return 3;
     }
     if (interval == 0) {
-        qWarning() << "ScreenCaptureTool: invalid command line argument: interval not valid";
+        qWarning() << "ScreenCaptureTool: interval not valid";
         return 2;
     }
     if (captureHwnd == 0) {
         if (captureWindow == nullptr) {
-            qWarning() << "ScreenCaptureTool: invalid command line argument: not supplying captureWindow";
+            qWarning() << "ScreenCaptureTool: not supplying captureWindow";
             return 2;
         }
         if (capturePid == -1) {
@@ -135,14 +139,21 @@ int main(int argc, char *argv[])
         }
         qDebug() << "ScreenCaptureTool: found capture window:" << captureHwnd;
     }
-    intptr_t hparent = 0;
+    intptr_t hwait = 0;
     if (waitParent) {
-        hparent = getProcessHandle(getParentProcessId(pid));
-        if (hparent == 0) {
+        hwait = getProcessHandle(getParentProcessId(pid));
+        if (hwait == 0) {
             qWarning() << "ScreenCaptureTool: can't not wait for parent";
             return 3;
         }
-        qDebug() << "ScreenCaptureTool: wait for parent:" << hparent;
+        qDebug() << "ScreenCaptureTool: wait for parent:" << hwait;
+    } else if (waitProcess) {
+        hwait = getProcessHandle(capturePid);
+        if (hwait == 0) {
+            qWarning() << "ScreenCaptureTool: can't not wait for process";
+            return 3;
+        }
+        qDebug() << "ScreenCaptureTool: wait for process:" << hwait;
     }
     qDebug() << "ScreenCaptureTool: interval:" << interval;
     qDebug() << "ScreenCaptureTool: maxsize:" << maxsize;
@@ -151,7 +162,7 @@ int main(int argc, char *argv[])
     qDebug() << "ScreenCaptureTool: postUrl:" << postUrl.toEncoded();
     qDebug() << "ScreenCaptureTool: session:" << session;
     qDebug() << "ScreenCaptureTool: httpProxy:" << httpProxy;
-    qDebug() << "ScreenCaptureTool: waitParent:" << waitParent;
+    qDebug() << "ScreenCaptureTool: hwait:" << hwait;
 
     // Start capture loop
     sharedPid = pid;
@@ -179,8 +190,8 @@ int main(int argc, char *argv[])
             if (maxcount && count >= maxcount)
                 break;
         }
-        if (hparent) {
-            if (waitForHandle(hparent, interval * 1000))
+        if (hwait) {
+            if (waitForHandle(hwait, interval * 1000))
                 break;
         } else {
             QThread::sleep(interval);
