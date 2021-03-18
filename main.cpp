@@ -164,13 +164,13 @@ int main(int argc, char *argv[])
     qDebug() << "ScreenCaptureTool: httpProxy:" << httpProxy;
     qDebug() << "ScreenCaptureTool: hwait:" << hwait;
 
-    // Start capture loop
-    sharedPid = pid;
     qDebug() << "ScreenCaptureTool: start";
     if (!poster->config(postUrl, httpProxy)) {
         return 3;
     }
 
+    // Start capture loop
+    sharedPid = pid;
     quint32 count = 0;
     while (sharedPid == pid) {
         QString name;
@@ -187,20 +187,28 @@ int main(int argc, char *argv[])
             qDebug() << "ScreenCaptureTool: capture a image:" << name;
             poster->postImage(pixmap, name, "jpg");
             ++count;
-            if (maxcount && count >= maxcount)
+            if (maxcount && count >= maxcount) {
+                pid = 0;
+                qDebug() << "ScreenCaptureTool: finished macount";
                 break;
+            }
         }
         if (hwait) {
-            if (waitForHandle(hwait, interval * 1000))
+            if (waitForHandle(hwait, interval * 1000)) {
+                pid = 0;
+                qDebug() << "ScreenCaptureTool: waited process exited";
                 break;
+            }
         } else {
             QThread::sleep(interval);
         }
     }
-
     // Exit capture loop
     delete poster;
-    sharedPid = 0;
+    if (pid > 0)
+        qDebug() << "ScreenCaptureTool: kicked by " << sharedPid;
+    else
+        sharedPid = 0;
     qDebug() << "ScreenCaptureTool: exit, capture count:" << count;
 
     return 0;
