@@ -190,14 +190,12 @@ int main(int argc, char *argv[])
             poster->postImage(pixmap, name, "jpg");
             ++count;
             if (maxcount && count >= maxcount) {
-                pid = 0;
                 qDebug() << "ScreenCaptureTool: finished macount";
                 break;
             }
         }
         if (hwait) {
             if (waitForHandle(hwait, interval * 1000)) {
-                pid = 0;
                 qDebug() << "ScreenCaptureTool: waited process exited";
                 break;
             }
@@ -207,7 +205,7 @@ int main(int argc, char *argv[])
     }
     // Exit capture loop
     delete poster;
-    if (pid > 0)
+    if (pid != sharedPid)
         qDebug() << "ScreenCaptureTool: kicked by " << sharedPid;
     else
         sharedPid = 0;
