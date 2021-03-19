@@ -108,11 +108,7 @@ int main(int argc, char *argv[])
         qWarning() << "ScreenCaptureTool: interval not valid";
         return 2;
     }
-    if (captureHwnd == 0) {
-        if (captureWindow == nullptr) {
-            qWarning() << "ScreenCaptureTool: not supplying captureWindow";
-            return 2;
-        }
+    if (captureHwnd == 0 || waitProcess) {
         if (capturePid == -1) {
             capturePid = getParentProcessId(getProcessId());
             if (capturePid == 0) {
@@ -130,6 +126,12 @@ int main(int argc, char *argv[])
                 }
                 qDebug() << "ScreenCaptureTool: found capture process " << pid;
             }
+        }
+    }
+    if (captureHwnd == 0) {
+        if (captureWindow == nullptr) {
+            qWarning() << "ScreenCaptureTool: not supplying captureWindow";
+            return 2;
         }
         char const * titleParts[] = {captureWindow, nullptr};
         captureHwnd = findWindow(capturePid, titleParts);
